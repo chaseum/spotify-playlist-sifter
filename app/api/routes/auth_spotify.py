@@ -42,6 +42,7 @@ def _redirect_to_frontend_callback(
 
 
 @router.get("/auth/spotify/login")
+@router.get("/api/auth/spotify/login")
 async def spotify_login(request: Request) -> RedirectResponse:
     if not settings.spotify_client_id:
         raise HTTPException(status_code=500, detail="CLIENT_ID is not configured")
@@ -124,6 +125,7 @@ async def spotify_callback(
 
 
 @router.get("/auth/logout")
+@router.get("/api/auth/logout")
 async def auth_logout(request: Request) -> Response:
     session_id = request.cookies.get(SESSION_COOKIE_NAME)
     if session_id:

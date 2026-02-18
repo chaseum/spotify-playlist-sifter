@@ -4,7 +4,10 @@
 
 - Purpose: backend-first Spotify Web API integration project.
 - Stack: Python 3.12 + FastAPI + SQL database (Postgres preferred; SQLite allowed for early dev).
-- Frontend: optional later. Old HTML/CSS site is inspiration only.
+- Frontend: thin testing shell served via FastAPI StaticFiles.
+- Location: app/web/
+- Contains index.html, app.js, styles.css
+- UI only — no Spotify API logic.
 - Do not assume `index.html` or `app.js` exist at repo root.
 
 ## Workspace discovery (avoid roadblocks)
@@ -50,3 +53,35 @@ Before planning or patching:
 
 - If a /docs/frontend_inspo/ folder exists, treat it as design reference only.
 - You may mirror CSS tokens, spacing, and accessibility patterns later, but do not require those files to exist.
+
+## Architecture rule: Spotify API ownership
+
+- The backend owns ALL Spotify Web API communication.
+- Frontend (`app/web/app.js`) must NEVER call `https://api.spotify.com/*` directly.
+- Frontend only calls internal routes such as:
+  - `/api/me`
+  - `/api/playlists`
+  - `/api/library`
+
+- Spotify access tokens and refresh logic live ONLY in:
+  - `app/services/spotify_client.py`
+  - `app/services/spotify_oauth.py`
+
+Frontend responsibilities:
+
+- Redirect user to `/auth/spotify/login`
+- Display connection state
+- Call backend API routes
+
+Backend responsibilities:
+
+- Build authorize URL (PKCE)
+- Exchange code for tokens
+- Refresh tokens automatically
+- Proxy Spotify Web API requests
+
+Reason:
+
+- Prevent token exposure in browser
+- Keep refresh logic centralized
+- Align with backend-first architecture
