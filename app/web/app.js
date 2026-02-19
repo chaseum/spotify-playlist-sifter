@@ -18,13 +18,23 @@ const createPlaylistDescriptionInput = document.getElementById("create-playlist-
 const createPlaylistPublicInput = document.getElementById("create-playlist-public");
 const createPlaylistSubmitButton = document.getElementById("create-playlist-submit");
 const createPlaylistStatusElement = document.getElementById("create-playlist-status");
+const searchTracksFormElement = document.getElementById("search-tracks-form");
+const searchTracksQueryInput = document.getElementById("search-tracks-query");
+const searchTracksSubmitButton = document.getElementById("search-tracks-submit");
+const searchTracksStatusElement = document.getElementById("search-tracks-status");
+const searchTracksResultsElement = document.getElementById("search-tracks-results");
+const searchTracksPrevButton = document.getElementById("search-tracks-prev-button");
+const searchTracksNextButton = document.getElementById("search-tracks-next-button");
+const searchTracksPageSummaryElement = document.getElementById("search-tracks-page-summary");
 
 const STEP_DISCONNECTED = "disconnected";
 const STEP_CONNECTED = "connected";
 const PLAYLISTS_PAGE_LIMIT = 10;
 const PLAYLIST_ITEMS_PAGE_LIMIT = 25;
+const SEARCH_TRACKS_PAGE_LIMIT = 10;
 const PLAYLIST_ITEMS_NOT_AVAILABLE_MESSAGE =
   "Items not available unless you own or collaborate on this playlist.";
+const SEARCH_TRACKS_DEFAULT_MESSAGE = "Search for a track to add.";
 const SESSION_STORAGE_PREFIX = "spotify_shell:";
 const SESSION_STORAGE_KEYS = {
   displayName: `${SESSION_STORAGE_PREFIX}display_name`,
@@ -55,6 +65,19 @@ const playlistItemsState = {
   total: 0,
 };
 let playlistItemsRequestSequence = 0;
+const searchState = {
+  query: "",
+  limit: SEARCH_TRACKS_PAGE_LIMIT,
+  offset: 0,
+  total: 0,
+  items: [],
+  loading: false,
+  error: "",
+  feedback: "",
+  addingTrackUri: "",
+  savingTrackUri: "",
+};
+let searchRequestSequence = 0;
 
 function toInteger(value, fallback) {
   const parsed = Number.parseInt(String(value), 10);
@@ -66,6 +89,14 @@ function clampPlaylistLimit(limit) {
 }
 
 function clampPlaylistOffset(offset) {
+  return Math.max(0, toInteger(offset, 0));
+}
+
+function clampSearchLimit(limit) {
+  return Math.min(SEARCH_TRACKS_PAGE_LIMIT, Math.max(1, toInteger(limit, SEARCH_TRACKS_PAGE_LIMIT)));
+}
+
+function clampSearchOffset(offset) {
   return Math.max(0, toInteger(offset, 0));
 }
 
@@ -173,6 +204,62 @@ function getPlaylistItemLabel(playlistItem) {
   return "Unavailable item metadata";
 }
 
+function getTrackName(track) {
+  if (track && typeof track.name === "string" && track.name.trim()) {
+    return track.name.trim();
+  }
+
+  return "";
+}
+
+function getTrackAlbumName(track) {
+  if (
+    track &&
+    track.album &&
+    typeof track.album.name === "string" &&
+    track.album.name.trim()
+  ) {
+    return track.album.name.trim();
+  }
+
+  return "";
+}
+
+function getTrackUri(track) {
+  if (track && typeof track.uri === "string" && track.uri.trim()) {
+    return track.uri.trim();
+  }
+
+  return "";
+}
+
+function getSearchTrackLabel(track) {
+  const name = getTrackName(track);
+  const artists = getTrackArtistsLabel(track);
+  const albumName = getTrackAlbumName(track);
+  const segments = [name, artists, albumName].filter((segment) => Boolean(segment));
+  if (segments.length > 0) {
+    return segments.join(" - ");
+  }
+
+  return "Unavailable track metadata";
+}
+
+function getSelectedPlaylistName() {
+  if (
+    typeof playlistItemsState.selectedPlaylistName === "string" &&
+    playlistItemsState.selectedPlaylistName.trim()
+  ) {
+    return playlistItemsState.selectedPlaylistName.trim();
+  }
+
+  return "selected playlist";
+}
+
+function isPlaylistSelected() {
+  return Boolean(playlistItemsState.selectedPlaylistId);
+}
+
 function setCreatePlaylistStatus(message) {
   if (!createPlaylistStatusElement) {
     return;
@@ -261,6 +348,144 @@ function resetPlaylistItemsState() {
   playlistItemsState.total = 0;
   playlistItemsRequestSequence += 1;
   renderPlaylistItems();
+  renderSearchTracks();
+}
+
+function getSearchResponsePage(payload) {
+  const pageData =
+    payload && typeof payload === "object" && payload.tracks && typeof payload.tracks === "object"
+      ? payload.tracks
+      : payload;
+
+  if (!pageData || typeof pageData !== "object") {
+    return null;
+  }
+
+  if (!Array.isArray(pageData.items)) {
+    return null;
+  }
+
+  return {
+    items: pageData.items,
+    limit: clampSearchLimit(pageData.limit),
+    offset: clampSearchOffset(pageData.offset),
+    total: Math.max(0, toInteger(pageData.total, pageData.items.length)),
+  };
+}
+
+function renderSearchTracks() {
+  const tracks = Array.isArray(searchState.items) ? searchState.items : [];
+
+  if (searchTracksResultsElement) {
+    searchTracksResultsElement.textContent = "";
+    for (const track of tracks) {
+      const trackLabelElement = document.createElement("span");
+      trackLabelElement.textContent = getSearchTrackLabel(track);
+
+      const addButton = document.createElement("button");
+      const trackUri = getTrackUri(track);
+      const addDisabled =
+        searchState.loading ||
+        Boolean(searchState.addingTrackUri) ||
+        !isPlaylistSelected() ||
+        !trackUri;
+      addButton.type = "button";
+      addButton.textContent = searchState.addingTrackUri === trackUri ? "Adding..." : "Add";
+      addButton.disabled = addDisabled;
+      if (trackUri) {
+        addButton.addEventListener("click", () => {
+          void addTrackToSelectedPlaylist(track);
+        });
+      }
+
+      const saveButton = document.createElement("button");
+      const saveDisabled =
+        searchState.loading ||
+        Boolean(searchState.savingTrackUri) ||
+        Boolean(searchState.addingTrackUri) ||
+        !trackUri;
+      saveButton.type = "button";
+      saveButton.textContent = searchState.savingTrackUri === trackUri ? "Saving..." : "Save";
+      saveButton.disabled = saveDisabled;
+      if (trackUri) {
+        saveButton.addEventListener("click", () => {
+          void saveTrackToLibrary(track);
+        });
+      }
+
+      const itemElement = document.createElement("li");
+      itemElement.appendChild(trackLabelElement);
+      itemElement.appendChild(document.createTextNode(" "));
+      itemElement.appendChild(addButton);
+      itemElement.appendChild(document.createTextNode(" "));
+      itemElement.appendChild(saveButton);
+      searchTracksResultsElement.appendChild(itemElement);
+    }
+  }
+
+  if (searchTracksStatusElement) {
+    if (searchState.loading) {
+      searchTracksStatusElement.textContent = "Searching tracks...";
+    } else if (searchState.error) {
+      searchTracksStatusElement.textContent = searchState.error;
+    } else if (!searchState.query) {
+      searchTracksStatusElement.textContent = SEARCH_TRACKS_DEFAULT_MESSAGE;
+    } else if (tracks.length === 0) {
+      searchTracksStatusElement.textContent = "No tracks found.";
+    } else if (searchState.feedback) {
+      searchTracksStatusElement.textContent = searchState.feedback;
+    } else if (!isPlaylistSelected()) {
+      searchTracksStatusElement.textContent = "Select a playlist to enable Add.";
+    } else {
+      searchTracksStatusElement.textContent = "";
+    }
+  }
+
+  if (searchTracksPageSummaryElement) {
+    if (searchState.query && searchState.total > 0 && tracks.length > 0) {
+      const start = searchState.offset + 1;
+      const end = Math.min(searchState.offset + tracks.length, searchState.total);
+      searchTracksPageSummaryElement.textContent = `Showing ${start}-${end} of ${searchState.total}`;
+    } else {
+      searchTracksPageSummaryElement.textContent = "Showing 0-0 of 0";
+    }
+  }
+
+  if (searchTracksPrevButton) {
+    searchTracksPrevButton.disabled =
+      searchState.loading || !searchState.query || searchState.offset === 0;
+  }
+  if (searchTracksNextButton) {
+    searchTracksNextButton.disabled =
+      searchState.loading ||
+      !searchState.query ||
+      searchState.total === 0 ||
+      searchState.offset + searchState.limit >= searchState.total;
+  }
+  if (searchTracksSubmitButton) {
+    searchTracksSubmitButton.disabled =
+      searchState.loading ||
+      Boolean(searchState.addingTrackUri) ||
+      Boolean(searchState.savingTrackUri);
+  }
+}
+
+function resetSearchState() {
+  searchState.query = "";
+  searchState.limit = SEARCH_TRACKS_PAGE_LIMIT;
+  searchState.offset = 0;
+  searchState.total = 0;
+  searchState.items = [];
+  searchState.loading = false;
+  searchState.error = "";
+  searchState.feedback = "";
+  searchState.addingTrackUri = "";
+  searchState.savingTrackUri = "";
+  searchRequestSequence += 1;
+  if (searchTracksQueryInput) {
+    searchTracksQueryInput.value = "";
+  }
+  renderSearchTracks();
 }
 
 function renderPlaylists() {
@@ -344,6 +569,7 @@ function resetPlaylistState() {
   playlistState.error = "";
   clearPlaylistHighlight();
   resetPlaylistItemsState();
+  resetSearchState();
   renderPlaylists();
 }
 
@@ -387,6 +613,7 @@ function renderConnectedStep(displayName) {
   }
 
   setCreatePlaylistSubmitting(false);
+  renderSearchTracks();
 }
 
 function renderStep(step, data = {}) {
@@ -518,6 +745,71 @@ async function apiCreateMyPlaylist({ name, description = "", public: isPublic = 
   });
 }
 
+async function apiSearchTracks({ q, offset = 0 } = {}) {
+  const safeQuery = typeof q === "string" ? q.trim() : "";
+  if (!safeQuery) {
+    throw { status: 422, message: "Search query is required." };
+  }
+
+  const safeOffset = clampSearchOffset(offset);
+  const params = new URLSearchParams({
+    q: safeQuery,
+    type: "track",
+    limit: String(SEARCH_TRACKS_PAGE_LIMIT),
+    offset: String(safeOffset),
+  });
+  return apiFetch(`/api/search?${params.toString()}`, { method: "GET" });
+}
+
+function sanitizeSpotifyUris(uris) {
+  const rawUris = Array.isArray(uris) ? uris : [];
+  const safeUris = rawUris
+    .map((uri) => (typeof uri === "string" ? uri.trim() : ""))
+    .filter((uri) => Boolean(uri));
+
+  if (safeUris.length === 0) {
+    throw { status: 422, message: "At least one Spotify URI is required." };
+  }
+
+  return safeUris;
+}
+
+async function apiSaveToLibrary(uris = []) {
+  const safeUris = sanitizeSpotifyUris(uris);
+  return apiFetch("/api/library", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ uris: safeUris }),
+  });
+}
+
+async function apiRemoveFromLibrary(uris = []) {
+  const safeUris = sanitizeSpotifyUris(uris);
+  return apiFetch("/api/library", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ uris: safeUris }),
+  });
+}
+
+async function apiAddTrackToPlaylist(playlistId, trackUri) {
+  const safePlaylistId = typeof playlistId === "string" ? playlistId.trim() : "";
+  if (!safePlaylistId) {
+    throw { status: 422, message: "Playlist ID is required." };
+  }
+
+  const safeTrackUri = typeof trackUri === "string" ? trackUri.trim() : "";
+  if (!safeTrackUri) {
+    throw { status: 422, message: "Track URI is required." };
+  }
+
+  return apiFetch(`/api/playlists/${encodeURIComponent(safePlaylistId)}/items`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ uris: [safeTrackUri] }),
+  });
+}
+
 function isPlaylistItemsUnavailableError(error) {
   const status = toInteger(error?.status, -1);
   if (status === 403 || status === 404) {
@@ -526,6 +818,146 @@ function isPlaylistItemsUnavailableError(error) {
 
   const message = typeof error?.message === "string" ? error.message.toLowerCase() : "";
   return message.includes("not available") || message.includes("collaborat");
+}
+
+async function loadSearchTracks(query, offset = 0) {
+  const safeQuery = typeof query === "string" ? query.trim() : "";
+  if (!safeQuery) {
+    searchState.query = "";
+    searchState.offset = 0;
+    searchState.total = 0;
+    searchState.items = [];
+    searchState.loading = false;
+    searchState.error = "Enter a search term.";
+    searchState.feedback = "";
+    searchState.addingTrackUri = "";
+    searchState.savingTrackUri = "";
+    searchRequestSequence += 1;
+    renderSearchTracks();
+    return;
+  }
+
+  const safeOffset = clampSearchOffset(offset);
+  const requestSequence = searchRequestSequence + 1;
+  searchRequestSequence = requestSequence;
+
+  searchState.query = safeQuery;
+  searchState.loading = true;
+  searchState.error = "";
+  searchState.feedback = "";
+  searchState.offset = safeOffset;
+  renderSearchTracks();
+
+  try {
+    const payload = await apiSearchTracks({ q: safeQuery, offset: safeOffset });
+    if (requestSequence !== searchRequestSequence) {
+      return;
+    }
+
+    const page = getSearchResponsePage(payload);
+    if (!page) {
+      searchState.loading = false;
+      searchState.error = "Spotify API returned invalid search data.";
+      renderSearchTracks();
+      return;
+    }
+
+    searchState.items = page.items;
+    searchState.limit = page.limit;
+    searchState.offset = page.offset;
+    searchState.total = page.total;
+    searchState.loading = false;
+    searchState.error = "";
+    renderSearchTracks();
+  } catch (error) {
+    if (requestSequence !== searchRequestSequence) {
+      return;
+    }
+
+    searchState.loading = false;
+    searchState.error =
+      error && typeof error.message === "string" && error.message
+        ? error.message
+        : "Failed to search tracks.";
+    renderSearchTracks();
+  }
+}
+
+async function addTrackToSelectedPlaylist(track) {
+  if (!isPlaylistSelected()) {
+    searchState.error = "Select a playlist before adding tracks.";
+    searchState.feedback = "";
+    renderSearchTracks();
+    return;
+  }
+
+  const selectedPlaylistId = playlistItemsState.selectedPlaylistId;
+  const selectedPlaylistName = getSelectedPlaylistName();
+  const trackUri = getTrackUri(track);
+  if (!trackUri) {
+    searchState.error = "This track cannot be added because its URI is unavailable.";
+    searchState.feedback = "";
+    renderSearchTracks();
+    return;
+  }
+
+  searchState.addingTrackUri = trackUri;
+  searchState.error = "";
+  searchState.feedback = "";
+  renderSearchTracks();
+
+  try {
+    await apiAddTrackToPlaylist(selectedPlaylistId, trackUri);
+    const trackName = getTrackName(track);
+    searchState.feedback = trackName
+      ? `Added "${trackName}" to ${selectedPlaylistName}.`
+      : `Track added to ${selectedPlaylistName}.`;
+    await loadSelectedPlaylistItems({
+      id: selectedPlaylistId,
+      name: selectedPlaylistName,
+    });
+  } catch (error) {
+    searchState.error =
+      error && typeof error.message === "string" && error.message
+        ? error.message
+        : "Failed to add track to playlist.";
+    searchState.feedback = "";
+  } finally {
+    searchState.addingTrackUri = "";
+    renderSearchTracks();
+  }
+}
+
+async function saveTrackToLibrary(track) {
+  const trackUri = getTrackUri(track);
+  if (!trackUri) {
+    searchState.error = "This track cannot be saved because its URI is unavailable.";
+    searchState.feedback = "";
+    renderSearchTracks();
+    return;
+  }
+
+  searchState.savingTrackUri = trackUri;
+  searchState.error = "";
+  searchState.feedback = "";
+  renderSearchTracks();
+
+  try {
+    await apiSaveToLibrary([trackUri]);
+    const trackName = getTrackName(track);
+    searchState.feedback = trackName
+      ? `Saved "${trackName}" to Liked Songs.`
+      : "Track saved to Liked Songs.";
+  } catch (error) {
+    searchState.error =
+      error && typeof error.message === "string" && error.message
+        ? error.message
+        : "Failed to save track to Liked Songs.";
+    searchState.feedback = "";
+  } finally {
+    searchState.savingTrackUri = "";
+    renderSearchTracks();
+  }
 }
 
 async function loadSelectedPlaylistItems(playlist) {
@@ -547,6 +979,7 @@ async function loadSelectedPlaylistItems(playlist) {
   playlistItemsState.total = 0;
   renderPlaylists();
   renderPlaylistItems();
+  renderSearchTracks();
 
   try {
     const payload = await apiGetPlaylistItems(selectedPlaylistId, {
@@ -569,6 +1002,7 @@ async function loadSelectedPlaylistItems(playlist) {
       playlistItemsState.offset = 0;
       playlistItemsState.total = 0;
       renderPlaylistItems();
+      renderSearchTracks();
       return;
     }
 
@@ -580,6 +1014,7 @@ async function loadSelectedPlaylistItems(playlist) {
     playlistItemsState.error = "";
     playlistItemsState.notAvailable = false;
     renderPlaylistItems();
+    renderSearchTracks();
   } catch (error) {
     if (
       requestSequence !== playlistItemsRequestSequence ||
@@ -604,6 +1039,7 @@ async function loadSelectedPlaylistItems(playlist) {
     }
 
     renderPlaylistItems();
+    renderSearchTracks();
   }
 }
 
@@ -758,6 +1194,26 @@ if (createPlaylistFormElement) {
     void createPlaylist(event);
   });
 }
+if (searchTracksFormElement) {
+  searchTracksFormElement.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const queryValue =
+      searchTracksQueryInput && typeof searchTracksQueryInput.value === "string"
+        ? searchTracksQueryInput.value
+        : "";
+    void loadSearchTracks(queryValue, 0);
+  });
+}
+if (searchTracksPrevButton) {
+  searchTracksPrevButton.addEventListener("click", () => {
+    void loadSearchTracks(searchState.query, Math.max(0, searchState.offset - searchState.limit));
+  });
+}
+if (searchTracksNextButton) {
+  searchTracksNextButton.addEventListener("click", () => {
+    void loadSearchTracks(searchState.query, searchState.offset + searchState.limit);
+  });
+}
 
 async function initializeApp() {
   const params = new URLSearchParams(window.location.search);
@@ -774,5 +1230,9 @@ window.apiMe = apiMe;
 window.apiGetMyPlaylists = apiGetMyPlaylists;
 window.apiGetPlaylistItems = apiGetPlaylistItems;
 window.apiCreateMyPlaylist = apiCreateMyPlaylist;
+window.apiSearchTracks = apiSearchTracks;
+window.apiAddTrackToPlaylist = apiAddTrackToPlaylist;
+window.apiSaveToLibrary = apiSaveToLibrary;
+window.apiRemoveFromLibrary = apiRemoveFromLibrary;
 
 void initializeApp();

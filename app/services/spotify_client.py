@@ -1,7 +1,7 @@
 import json
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from app.core.config import settings
@@ -82,7 +82,7 @@ def _spotify_request_json(
             except json.JSONDecodeError:
                 payload = None
 
-        if exc.code in (401, 403):
+        if exc.code == 401:
             message = _extract_error_message(payload, "Unauthorized Spotify token")
             raise SpotifyClientError(status_code=exc.code, message=message, auth_error=True) from exc
 
@@ -90,6 +90,9 @@ def _spotify_request_json(
         raise SpotifyClientError(status_code=exc.code, message=message) from exc
     except URLError as exc:
         raise SpotifyClientError(status_code=502, message="Spotify API unavailable") from exc
+
+    if not body:
+        return {}
 
     return _decode_json(body)
 
@@ -141,6 +144,17 @@ def get_current_user(access_token: str) -> dict[str, Any]:
     if not isinstance(profile, dict):
         raise SpotifyClientError(status_code=502, message="Spotify API returned invalid profile data")
     return profile
+
+
+def get_track(access_token: str, track_id: str) -> dict[str, Any]:
+    safe_track_id = track_id.strip()
+    if not safe_track_id:
+        raise SpotifyClientError(status_code=400, message="Track ID is required")
+
+    payload = _spotify_request_json(f"/v1/tracks/{quote(safe_track_id)}", access_token)
+    if not isinstance(payload, dict):
+        raise SpotifyClientError(status_code=502, message="Spotify API returned invalid track data")
+    return payload
 
 
 def get_my_playlists(access_token: str, limit: int = 10, offset: int = 0) -> dict[str, Any]:
@@ -197,6 +211,119 @@ def create_my_playlist(
     return response_payload
 
 
+def search_tracks(
+    access_token: str,
+    query: str,
+    limit: int = 10,
+    offset: int = 0,
+) -> dict[str, Any]:
+    safe_query = query.strip()
+    if not safe_query:
+        raise SpotifyClientError(status_code=400, message="Search query is required")
+
+    safe_limit = max(1, min(10, int(limit)))
+    safe_offset = max(0, int(offset))
+    search_query = urlencode(
+        {
+            "q": safe_query,
+            "type": "track",
+            "limit": safe_limit,
+            "offset": safe_offset,
+        }
+    )
+    payload = _spotify_request_json(f"/v1/search?{search_query}", access_token)
+    if not isinstance(payload, dict):
+        raise SpotifyClientError(status_code=502, message="Spotify API returned invalid search data")
+    return payload
+
+
+def add_items_to_playlist(
+    access_token: str,
+    playlist_id: str,
+    uris: list[str],
+) -> dict[str, Any]:
+    safe_playlist_id = playlist_id.strip()
+    if not safe_playlist_id:
+        raise SpotifyClientError(status_code=400, message="Playlist ID is required")
+
+    safe_uris = [uri.strip() for uri in uris if isinstance(uri, str) and uri.strip()]
+    if not safe_uris:
+        raise SpotifyClientError(status_code=400, message="At least one track URI is required")
+
+    payload = _spotify_request_json(
+        f"/v1/playlists/{safe_playlist_id}/items",
+        access_token,
+        method="POST",
+        json_payload={"uris": safe_uris},
+    )
+    if not isinstance(payload, dict):
+        raise SpotifyClientError(status_code=502, message="Spotify API returned invalid add-items data")
+    return payload
+
+
+def _spotify_uri_to_url(uri: str) -> str | None:
+    parts = uri.split(":")
+    if len(parts) != 3 or parts[0] != "spotify":
+        return None
+
+    item_type = parts[1].strip()
+    item_id = parts[2].strip()
+    if not item_type or not item_id:
+        return None
+
+    if item_type == "user":
+        return f"https://open.spotify.com/user/{item_id}"
+
+    return f"https://open.spotify.com/{item_type}/{item_id}"
+
+
+def _library_query_from_uris(uris: list[str]) -> str:
+    safe_uris = [uri.strip() for uri in uris if isinstance(uri, str) and uri.strip()]
+    if not safe_uris:
+        raise SpotifyClientError(status_code=400, message="At least one Spotify URI is required")
+
+    # Keep URI-based contract and include URL form for compatibility with /me/library validation variants.
+    query_payload: dict[str, str] = {"uris": ",".join(safe_uris)}
+    urls = [_spotify_uri_to_url(uri) for uri in safe_uris]
+    safe_urls = [url for url in urls if isinstance(url, str) and url]
+    if safe_urls:
+        query_payload["urls"] = ",".join(safe_urls)
+
+    return urlencode(query_payload)
+
+
+def save_to_my_library(
+    access_token: str,
+    uris: list[str],
+) -> dict[str, Any]:
+    query = _library_query_from_uris(uris)
+
+    payload = _spotify_request_json(
+        f"/v1/me/library?{query}",
+        access_token,
+        method="PUT",
+    )
+    if not isinstance(payload, dict):
+        raise SpotifyClientError(status_code=502, message="Spotify API returned invalid library save data")
+    return payload
+
+
+def remove_from_my_library(
+    access_token: str,
+    uris: list[str],
+) -> dict[str, Any]:
+    query = _library_query_from_uris(uris)
+
+    payload = _spotify_request_json(
+        f"/v1/me/library?{query}",
+        access_token,
+        method="DELETE",
+    )
+    if not isinstance(payload, dict):
+        raise SpotifyClientError(status_code=502, message="Spotify API returned invalid library remove data")
+    return payload
+
+
 def _request_for_session(session_id: str, request_fn: Callable[[str], dict[str, Any]]) -> dict[str, Any]:
     token_data = get_tokens(session_id)
     if not token_data:
@@ -210,7 +337,7 @@ def _request_for_session(session_id: str, request_fn: Callable[[str], dict[str, 
     try:
         return request_fn(access_token)
     except SpotifyClientError as exc:
-        if exc.status_code not in (401, 403):
+        if exc.status_code != 401:
             raise
 
     refresh_token = token_data.get("refresh_token")
@@ -232,7 +359,7 @@ def _request_for_session(session_id: str, request_fn: Callable[[str], dict[str, 
     try:
         return request_fn(refreshed_access_token)
     except SpotifyClientError as exc:
-        if exc.status_code in (401, 403):
+        if exc.status_code == 401:
             clear_tokens(session_id)
             raise SpotifyClientError(status_code=401, message="Not authorized", auth_error=True) from exc
         raise
@@ -240,6 +367,13 @@ def _request_for_session(session_id: str, request_fn: Callable[[str], dict[str, 
 
 def get_current_user_for_session(session_id: str) -> dict[str, Any]:
     return _request_for_session(session_id, get_current_user)
+
+
+def get_track_for_session(session_id: str, track_id: str) -> dict[str, Any]:
+    return _request_for_session(
+        session_id,
+        lambda access_token: get_track(access_token=access_token, track_id=track_id),
+    )
 
 
 def get_my_playlists_for_session(session_id: str, limit: int = 10, offset: int = 0) -> dict[str, Any]:
@@ -280,4 +414,56 @@ def create_my_playlist_for_session(
             description=description,
             public=public,
         ),
+    )
+
+
+def search_tracks_for_session(
+    session_id: str,
+    query: str,
+    limit: int = 10,
+    offset: int = 0,
+) -> dict[str, Any]:
+    return _request_for_session(
+        session_id,
+        lambda access_token: search_tracks(
+            access_token=access_token,
+            query=query,
+            limit=limit,
+            offset=offset,
+        ),
+    )
+
+
+def add_items_to_playlist_for_session(
+    session_id: str,
+    playlist_id: str,
+    uris: list[str],
+) -> dict[str, Any]:
+    return _request_for_session(
+        session_id,
+        lambda access_token: add_items_to_playlist(
+            access_token=access_token,
+            playlist_id=playlist_id,
+            uris=uris,
+        ),
+    )
+
+
+def save_to_my_library_for_session(
+    session_id: str,
+    uris: list[str],
+) -> dict[str, Any]:
+    return _request_for_session(
+        session_id,
+        lambda access_token: save_to_my_library(access_token=access_token, uris=uris),
+    )
+
+
+def remove_from_my_library_for_session(
+    session_id: str,
+    uris: list[str],
+) -> dict[str, Any]:
+    return _request_for_session(
+        session_id,
+        lambda access_token: remove_from_my_library(access_token=access_token, uris=uris),
     )

@@ -3,7 +3,10 @@ from fastapi import APIRouter, HTTPException
 from app.core.config import settings
 
 DEFAULT_REDIRECT_URI = "http://127.0.0.1:8000/"
-DEFAULT_SCOPES = "user-read-private user-read-email"
+DEFAULT_SCOPES = (
+    "user-read-private user-read-email playlist-modify-private "
+    "playlist-modify-public user-library-read user-library-modify"
+)
 DEFAULT_AUTHORIZE_URL = "https://accounts.spotify.com/authorize"
 DEFAULT_TOKEN_URL = "https://accounts.spotify.com/api/token"
 

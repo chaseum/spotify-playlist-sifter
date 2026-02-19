@@ -44,6 +44,19 @@
         <h2>Selected Playlist Items</h2>
         <p id="playlist-items-status" aria-live="polite">Select a playlist to view items.</p>
         <ul id="playlist-items-list" aria-live="polite"></ul>
+        <h2>Search Tracks</h2>
+        <form id="search-tracks-form">
+          <label for="search-tracks-query">Track name</label>
+          <input id="search-tracks-query" name="q" type="text" />
+          <button id="search-tracks-submit" type="submit">Search</button>
+        </form>
+        <p id="search-tracks-status" aria-live="polite">Search for a track to add.</p>
+        <ul id="search-tracks-results" aria-live="polite"></ul>
+        <div>
+          <button id="search-tracks-prev-button" type="button" disabled>Prev</button>
+          <button id="search-tracks-next-button" type="button" disabled>Next</button>
+        </div>
+        <p id="search-tracks-page-summary" aria-live="polite">Showing 0-0 of 0</p>
       </section>
     </main>
     <script src="/web/app.js"></script>

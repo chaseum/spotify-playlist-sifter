@@ -54,7 +54,10 @@ settings = Settings(
     ),
     spotify_scopes=_first_non_empty(
         _read_config_value("SPOTIFY_SCOPES"),
-        "user-read-private user-read-email playlist-modify-private playlist-modify-public",
+        (
+            "user-read-private user-read-email playlist-modify-private "
+            "playlist-modify-public user-library-read user-library-modify"
+        ),
     ),
     spotify_authorize_url=_first_non_empty(
         _read_config_value("SPOTIFY_AUTHORIZE_URL"),
