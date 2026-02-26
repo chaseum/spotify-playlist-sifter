@@ -242,7 +242,8 @@ def test_api_remove_from_library_returns_payload(monkeypatch) -> None:
 
     monkeypatch.setattr(me_route, "remove_from_my_library_for_session", fake_remove_from_my_library_for_session)
 
-    response = client.delete(
+    response = client.request(
+        "DELETE",
         "/api/library",
         cookies={me_route.SESSION_COOKIE_NAME: "session-123"},
         json={"uris": [" spotify:track:abc "]},
@@ -316,8 +317,8 @@ def test_get_current_user_for_session_refreshes_and_retries(monkeypatch) -> None
         lambda refresh_token: {"access_token": "new-access", "expires_in": 3600},
     )
 
-    def fake_store_tokens(stored_session_id: str, token_data: dict) -> None:
-        state["stored_tokens"] = (stored_session_id, token_data)
+    def fake_store_tokens(session_id: str, token_data: dict) -> None:
+        state["stored_tokens"] = (session_id, token_data)
 
     monkeypatch.setattr(spotify_client, "store_tokens", fake_store_tokens)
 
@@ -359,8 +360,8 @@ def test_get_my_playlists_for_session_refreshes_and_retries(monkeypatch) -> None
         lambda refresh_token: {"access_token": "new-access", "expires_in": 3600},
     )
 
-    def fake_store_tokens(stored_session_id: str, token_data: dict) -> None:
-        state["stored_tokens"] = (stored_session_id, token_data)
+    def fake_store_tokens(session_id: str, token_data: dict) -> None:
+        state["stored_tokens"] = (session_id, token_data)
 
     monkeypatch.setattr(spotify_client, "store_tokens", fake_store_tokens)
 
@@ -720,8 +721,8 @@ def test_create_my_playlist_for_session_refreshes_and_retries(monkeypatch) -> No
         lambda refresh_token: {"access_token": "new-access", "expires_in": 3600},
     )
 
-    def fake_store_tokens(stored_session_id: str, token_data: dict) -> None:
-        state["stored_tokens"] = (stored_session_id, token_data)
+    def fake_store_tokens(session_id: str, token_data: dict) -> None:
+        state["stored_tokens"] = (session_id, token_data)
 
     monkeypatch.setattr(spotify_client, "store_tokens", fake_store_tokens)
 

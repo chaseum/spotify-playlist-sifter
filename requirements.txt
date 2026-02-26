@@ -2,3 +2,14 @@ fastapi
 uvicorn
 pytest
 pyarrow
+httpx
+h5py
+numpy
+rapidfuzz
+faiss-cpu
+scikit-learn
+# lightfm @ git+https://github.com/lyst/lightfm.git
+# RecBole requires torch>=1.7. Install a CUDA-enabled torch wheel separately if needed.
+torch>=1.7
+recbole
+ruff

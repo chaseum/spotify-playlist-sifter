@@ -1,0 +1,19 @@
+# Ignore large local dataset artifacts in this folder.
+*.h5
+*.hdf5
+*.npy
+*.npz
+*.parquet
+*.csv
+*.tsv
+*.jsonl
+*.pkl
+*.pt
+*.bin
+*.index
+*.faiss
+*.db
+*.sqlite
+*.zip
+*.tar
+*.gz

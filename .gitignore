@@ -1,1 +1,8 @@
 .env
+ml/data
+ml/**
+!ml/**/
+!ml/**/*.py
+ml/data/**
+.venv/
+.venv-1/
